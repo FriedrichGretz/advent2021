@@ -34,8 +34,10 @@ let updateMapping mapping charr =
         else
             assert (Array.length charr = 6)
             // charr represents 6, 9
-            if isIn (keyOf 1) charr then // 9
+            if isIn (keyOf 4) charr then // 9
                 mapping |> Map.add charr 9
+            elif isIn (keyOf 1) charr then // 0
+                mapping |> Map.add charr 0
             else // 6
                 mapping |> Map.add charr 6
     else
