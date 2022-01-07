@@ -1,53 +1,63 @@
+//#r "nuget: OptimizedPriorityQueue, 5.1.0"
+//open Priority_Queue
+#r "nuget: C5, 3.0.0-rc"
+
 // Dijkstra's single-source shortest path algorithm
-type VertexAttributes<'a> =
+type Vertex<'a> =
     {
+        value: 'a
         dist: uint64 // an upper bound on distance from source
         pred: 'a option // predecesor that guarantees dist
     }
-    static member Init =
-        { dist = System.UInt64.MaxValue
-          pred = None }
-type VertexMap<'a when 'a:comparison> = Map<'a, VertexAttributes<'a>>
+type VertexMap<'a> = System.Collections.Generic.Dictionary<'a, Vertex<'a>>
+type VertexCompare<'a> () =
+    interface System.Collections.Generic.IComparer<Vertex<'a>> with
+        member __.Compare (x, y) =
+            if x.dist < y.dist then -1
+            elif x.dist = y.dist then 0
+            else 1
 
-let dijkstra neighbourhood distance s =
-    let getClosestNeighbour (sortedVertices: System.Collections.Generic.SortedSet<_>) =
-        // let uName, uProp =
-        //     Map.toList vertexMap
-        //     |> List.minBy (fun (_ , prop) -> prop.dist)
-        // Map.remove uName vertexMap, uName, uProp 
-        let u = sortedVertices.Min
-        ignore <| sortedVertices.Remove u
-        u
-    // let toVertexMap knownVertices names = 
-    //     names 
-    //     |> List.map (fun name -> if Map.containsKey name knownVertices then name,knownVertices.[name] else name,VertexAttributes<_>.Init)
-    //     |> Map.ofList
-    let relax (sortedVertices: System.Collections.Generic.SortedSet<_>) uName uProp vName =
-        if vProp.dist > uProp.dist + distance uName vName then
-            ignore <| sortedVertices.Remove (vName, vProp)
-            ignore <| sortedVertices.Add (vName, {dist = uProp.dist + distance uName vName; pred = Some uName})
-            // vertexMap
-            // |> Map.add vName {dist = uProp.dist + distance uName vName; pred = Some uName}
+let dijkstra (neighbourhood: 'a -> 'a list) (distance: 'a -> 'a -> uint64) (initialVertexName: 'a) =
+    let remainingVertices = C5.IntervalHeap<_>(VertexCompare<_>())
+    let remainingHandles = System.Collections.Generic.Dictionary<_,C5.IPriorityQueueHandle<_>>()
+    let exploredVertices = VertexMap<_>()
+    
+    let relax currentNode (neighbourHandle: C5.IPriorityQueueHandle<_>) =
+        let mutable neighbour = Unchecked.defaultof<_>
+        let ret = remainingVertices.Find(neighbourHandle, &neighbour)
+        assert ret
+        if neighbour.dist > currentNode.dist + distance currentNode.value neighbour.value then
+            do ignore <| remainingVertices.Replace(neighbourHandle, {neighbour with dist = currentNode.dist + distance currentNode.value neighbour.value; pred = Some currentNode.value})
         else
-            () //vertexMap
-    let rec step (exploredVertices: VertexMap<_>) (remainingVertices: System.Collections.Generic.SortedSet<_>) = //(remainingVertices: VertexMap<_>) =
-        //if Map.isEmpty remainingVertices then
+            ()
+    let rec step () =
         if remainingVertices.Count = 0 then
             exploredVertices
         else
-            let uName, uProp = getClosestNeighbour remainingVertices
-            let newExploredVertices = Map.add uName uProp exploredVertices
-            //let newRemainingVertices =
-            neighbourhood uName
-            |> List.filter (fun name -> not <| Map.containsKey name newExploredVertices)
-            |> List.iter (relax remainingVertices uName uProp)
-                // |> toVertexMap remainingVertices
-                // |> Map.fold (relax uName uProp) remainingVertices
-            step newExploredVertices remainingVertices
-    let exploredVertices = Map.empty
-    let remainingVertices = System.Collections.Generic.SortedSet<_>([s, {dist = 0UL; pred = None}])
-        //Map.add s {dist = 0UL; pred = None} Map.empty
-    step exploredVertices remainingVertices
+            let vertex = remainingVertices.DeleteMin() // select closest vertex
+            do ignore <| remainingHandles.Remove vertex.value // invalidate handle
+            do ignore <| exploredVertices.Add(vertex.value, vertex) // add it to the completely explored vertices
+            let neighbours = neighbourhood vertex.value // determine neighbours of this vertex and update their distances
+            let neighbourHandles =
+                neighbours
+                |> List.choose (fun a -> 
+                    if exploredVertices.ContainsKey a then 
+                        None 
+                    elif remainingHandles.ContainsKey a then
+                        Some remainingHandles.[a]
+                    else
+                        let mutable handle = Unchecked.defaultof<_>
+                        do ignore <| remainingVertices.Add(&handle,{value=a; dist = System.UInt64.MaxValue; pred = None})
+                        remainingHandles.Add(a, handle) 
+                        Some handle
+                    )
+            neighbourHandles |> List.iter (relax vertex)
+            step ()
+    
+    let mutable handle = Unchecked.defaultof<_>
+    do ignore <| remainingVertices.Add(&handle,{value=initialVertexName; dist = 0UL; pred = None})
+    remainingHandles.Add(initialVertexName, handle)
+    step ()
 
 
 // let cavern = array2D([
@@ -64,7 +74,7 @@ let dijkstra neighbourhood distance s =
 // ])
 let cavern =
     System.IO.File.ReadAllLines("input.txt")
-    |> Array.map (fun s -> s.ToCharArray() |> Array.map (string >> System.UInt32.Parse))
+    |> Array.map (fun s -> s.ToCharArray() |> Array.map (string >> System.Int32.Parse))
     |> array2D
 
 let enumarateNeighbours table x y =
@@ -85,24 +95,26 @@ let rec printPathTo (exploredVertices: VertexMap<_>) vertex =
     | None -> ()
     | Some v -> printPathTo exploredVertices v
 
-dijkstra neighbourhood distance (0,0)
-// |> printPathTo <| (Array2D.length1 cavern - 1,Array2D.length2 cavern - 1)
-|> Map.find (Array2D.length1 cavern - 1,Array2D.length2 cavern - 1)
-|> printfn "Part A. %A"
+let resultMap = dijkstra neighbourhood distance (0,0)
+//printPathTo resultMap (Array2D.length1 cavern - 1, Array2D.length2 cavern - 1)
+resultMap.[Array2D.length1 cavern - 1,Array2D.length2 cavern - 1].dist
+|> printfn "Part A. Distance %i"
 
 let cavern5 =
     let incLimit x = 
-        if x <= 9u then x
-        else x - 9u
-    let res = Array2D.create (5 * Array2D.length1 cavern) (5 * Array2D.length2 cavern) 0u
+        if x <= 9 then x
+        else x - 9
+    let res = Array2D.create (5 * Array2D.length1 cavern) (5 * Array2D.length2 cavern) 0
     for i in 0..4 do
         for j in 0..4 do
-            cavern |> Array2D.iteri (fun x y value -> res[(i+1)*x, (j+1)*y] <- incLimit(cavern[x,y] + uint i + uint j) ) 
+            cavern |> Array2D.iteri (fun x y value -> res[(i * Array2D.length1 cavern)+x, (j * Array2D.length2 cavern)+y] <- incLimit(value + i + j) ) 
     res
+
+//printfn "%A" cavern5
 
 let neighbourhood5 (x,y) = enumarateNeighbours cavern5 x y
 let distance5 _ (x,y) = uint64 cavern5[x,y]
-dijkstra neighbourhood5 distance5 (0,0)
-// |> printPathTo <| (Array2D.length1 cavern - 1,Array2D.length2 cavern - 1)
-|> Map.find (Array2D.length1 cavern5 - 1,Array2D.length2 cavern5 - 1)
-|> printfn "Part B. %A"
+let resultMap5 = dijkstra neighbourhood5 distance5 (0,0)
+// printPathTo resultMap (Array2D.length1 cavern5 - 1, Array2D.length2 cavern5 - 1)
+resultMap5.[Array2D.length1 cavern5 - 1,Array2D.length2 cavern5 - 1].dist
+|> printfn "Part B. Distance %i"
